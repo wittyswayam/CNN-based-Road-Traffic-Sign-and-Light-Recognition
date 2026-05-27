@@ -1,0 +1,72 @@
+groups:
+  - name: trafficvision_alerts
+    interval: 30s
+    rules:
+
+      # ── Availability ───────────────────────────────────────────────────────
+      - alert: APIDown
+        expr: up{job="trafficvision_api"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "TrafficVision API is down"
+          description: "API instance {{ $labels.instance }} has been unreachable for 1 minute."
+
+      # ── Latency ────────────────────────────────────────────────────────────
+      - alert: HighP95Latency
+        expr: histogram_quantile(0.95, rate(http_request_duration_seconds_bucket{job="trafficvision_api"}[5m])) > 0.5
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High p95 latency detected"
+          description: "p95 latency is {{ $value | humanizeDuration }} (threshold: 500ms)"
+
+      - alert: CriticalP95Latency
+        expr: histogram_quantile(0.95, rate(http_request_duration_seconds_bucket{job="trafficvision_api"}[5m])) > 1.0
+        for: 3m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Critical p95 latency — SLA breach imminent"
+          description: "p95 latency is {{ $value | humanizeDuration }} (threshold: 1s)"
+
+      # ── Error Rate ─────────────────────────────────────────────────────────
+      - alert: HighErrorRate
+        expr: rate(http_requests_total{job="trafficvision_api",status=~"5.."}[5m]) / rate(http_requests_total{job="trafficvision_api"}[5m]) > 0.05
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Error rate above 5%"
+          description: "Error rate is {{ $value | humanizePercentage }}"
+
+      # ── Model Drift ────────────────────────────────────────────────────────
+      - alert: ModelDriftWarning
+        expr: trafficvision_drift_psi > 0.10
+        for: 0m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Model drift warning: PSI > 0.10"
+          description: "Coordinate {{ $labels.coordinate }} PSI={{ $value }}"
+
+      - alert: ModelDriftCritical
+        expr: trafficvision_drift_psi > 0.20
+        for: 0m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Critical model drift: retraining required"
+          description: "PSI={{ $value }} exceeds 0.20 threshold — trigger retraining pipeline"
+
+      # ── Cache ──────────────────────────────────────────────────────────────
+      - alert: LowCacheHitRate
+        expr: trafficvision_cache_hit_rate < 0.10
+        for: 15m
+        labels:
+          severity: info
+        annotations:
+          summary: "Cache hit rate below 10%"
+          description: "Current rate: {{ $value | humanizePercentage }}"

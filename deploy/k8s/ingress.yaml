@@ -1,0 +1,84 @@
+---
+# Nginx Ingress with TLS termination + rate limiting
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: trafficvision-ingress
+  namespace: trafficvision
+  annotations:
+    kubernetes.io/ingress.class: nginx
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/rate-limit: "100"
+    nginx.ingress.kubernetes.io/rate-limit-window: "1m"
+    nginx.ingress.kubernetes.io/proxy-body-size: "10m"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "30"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "30"
+    nginx.ingress.kubernetes.io/enable-cors: "true"
+    nginx.ingress.kubernetes.io/cors-allow-origin: "https://app.trafficvision.ai"
+spec:
+  tls:
+    - hosts:
+        - api.trafficvision.ai
+      secretName: trafficvision-tls
+  rules:
+    - host: api.trafficvision.ai
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: trafficvision-api-svc
+                port:
+                  number: 80
+
+---
+# PodDisruptionBudget — ensure minimum availability during rolling updates
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: trafficvision-pdb
+  namespace: trafficvision
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app: trafficvision-api
+
+---
+# NetworkPolicy — restrict pod-to-pod traffic
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: trafficvision-netpol
+  namespace: trafficvision
+spec:
+  podSelector:
+    matchLabels:
+      app: trafficvision-api
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ingress-nginx
+      ports:
+        - protocol: TCP
+          port: 8000
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app: trafficvision-redis
+      ports:
+        - protocol: TCP
+          port: 6379
+    - to: []          # allow external (MLflow, S3, etc.)
+      ports:
+        - protocol: TCP
+          port: 443
+        - protocol: TCP
+          port: 5000

@@ -1,0 +1,189 @@
+# ==============================================================================
+# TrafficVision-AI :: Kubernetes Deployment
+# ==============================================================================
+# Apply: kubectl apply -f deploy/k8s/
+# ==============================================================================
+
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: trafficvision
+  labels:
+    app.kubernetes.io/name: trafficvision-ai
+    app.kubernetes.io/version: "2.0.0"
+
+---
+# ConfigMap for non-secret configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: trafficvision-config
+  namespace: trafficvision
+data:
+  APP_ENV: "production"
+  API_PORT: "8000"
+  API_WORKERS: "4"
+  REDIS_HOST: "trafficvision-redis"
+  REDIS_PORT: "6379"
+  MLFLOW_TRACKING_URI: "http://mlflow:5000"
+
+---
+# Main API Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: trafficvision-api
+  namespace: trafficvision
+  labels:
+    app: trafficvision-api
+    version: "2.0.0"
+  annotations:
+    deployment.kubernetes.io/revision: "1"
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: trafficvision-api
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
+      maxSurge: 1
+  template:
+    metadata:
+      labels:
+        app: trafficvision-api
+        version: "2.0.0"
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8000"
+        prometheus.io/path: "/metrics"
+    spec:
+      serviceAccountName: trafficvision-sa
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+        fsGroup: 1001
+      containers:
+        - name: api
+          image: ghcr.io/your-org/trafficvision-ai:2.0.0
+          imagePullPolicy: Always
+          ports:
+            - name: http
+              containerPort: 8000
+              protocol: TCP
+          envFrom:
+            - configMapRef:
+                name: trafficvision-config
+            - secretRef:
+                name: trafficvision-secrets
+          resources:
+            requests:
+              cpu: "500m"
+              memory: "1Gi"
+            limits:
+              cpu: "2000m"
+              memory: "4Gi"
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 60
+            periodSeconds: 30
+            timeoutSeconds: 10
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 8000
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          volumeMounts:
+            - name: model-registry
+              mountPath: /app/models
+              readOnly: true
+      volumes:
+        - name: model-registry
+          persistentVolumeClaim:
+            claimName: model-registry-pvc
+            readOnly: true
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: DoNotSchedule
+          labelSelector:
+            matchLabels:
+              app: trafficvision-api
+
+---
+# Horizontal Pod Autoscaler
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: trafficvision-api-hpa
+  namespace: trafficvision
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: trafficvision-api
+  minReplicas: 3
+  maxReplicas: 20
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: 80
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 60
+      policies:
+        - type: Pods
+          value: 4
+          periodSeconds: 60
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+        - type: Pods
+          value: 2
+          periodSeconds: 120
+
+---
+# Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: trafficvision-api-svc
+  namespace: trafficvision
+  labels:
+    app: trafficvision-api
+spec:
+  type: ClusterIP
+  selector:
+    app: trafficvision-api
+  ports:
+    - name: http
+      protocol: TCP
+      port: 80
+      targetPort: 8000
+
+---
+# ServiceAccount
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: trafficvision-sa
+  namespace: trafficvision
+  annotations:
+    eks.amazonaws.com/role-arn: arn:aws:iam::ACCOUNT_ID:role/trafficvision-api-role

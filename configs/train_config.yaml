@@ -1,0 +1,55 @@
+# ==============================================================================
+# TrafficVision-AI :: Training Configuration
+# ==============================================================================
+# Loaded by DVC pipeline and training scripts.
+# Override values via CLI args or environment variables.
+
+model:
+  backbone: efficientnetb3          # resnet50 | efficientnetb3 | mobilenetv3
+  input_size: [224, 224]
+  dense_units: 1024
+  dropout_rate: 0.3
+  learning_rate: 0.0001
+  batch_size: 32
+  epochs_phase1: 30
+  epochs_phase2: 20
+  early_stopping_patience: 10
+  reduce_lr_patience: 5
+  reduce_lr_factor: 0.5
+  loss: combined                    # mse | iou | combined
+  loss_alpha: 0.7                   # weight of MSE vs IoU in combined loss
+
+data:
+  train_split: 0.70
+  val_split: 0.15
+  test_split: 0.15
+  augmentation_enabled: true
+  augmentation_factor: 3
+  target_size: [224, 224]
+  cache_preprocessed: true
+
+ensemble:
+  enabled: false
+  models:
+    - backbone: resnet50
+      weight: 0.5
+    - backbone: efficientnetb3
+      weight: 0.3
+    - backbone: mobilenetv3
+      weight: 0.2
+
+mlflow:
+  enabled: false
+  tracking_uri: http://localhost:5000
+  experiment_name: trafficvision-detection
+
+quality_gates:
+  min_iou_staging: 0.70
+  min_iou_production: 0.73
+  max_p95_latency_ms: 200
+
+hpo:
+  n_trials: 30
+  max_epochs_per_trial: 15
+  sampler: tpe
+  pruner: median

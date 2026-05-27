@@ -1,0 +1,71 @@
+schema: '2.0'
+
+stages:
+  # ── Stage 1: ETL ──────────────────────────────────────────────────────────
+  etl:
+    cmd: python scripts/run_etl.py
+      --source-dir data/raw
+      --output-dir data/processed
+      --shard-size 1000
+    deps:
+      - scripts/run_etl.py
+      - src/data/etl_pipeline.py
+      - src/data/preprocessing.py
+      - data/raw
+    outs:
+      - data/processed
+    metrics:
+      - models/evaluation/etl_report.json:
+          cache: false
+
+  # ── Stage 2: Train ────────────────────────────────────────────────────────
+  train:
+    cmd: python scripts/train.py
+      --backbone efficientnetb3
+      --epochs-phase1 30
+      --epochs-phase2 20
+      --batch-size 32
+      --output-dir models/registry/latest
+    deps:
+      - scripts/train.py
+      - src/ml/model.py
+      - src/ml/trainer.py
+      - src/data/preprocessing.py
+      - data/processed
+    outs:
+      - models/registry/latest
+    metrics:
+      - models/registry/latest/metrics.json:
+          cache: false
+    params:
+      - configs/train_config.yaml:
+          - model.backbone
+          - model.learning_rate
+          - model.batch_size
+
+  # ── Stage 3: Evaluate ─────────────────────────────────────────────────────
+  evaluate:
+    cmd: python scripts/evaluate.py
+      --model-path models/registry/latest
+      --output-dir models/evaluation
+      --benchmark-runs 100
+    deps:
+      - scripts/evaluate.py
+      - src/ml/evaluation.py
+      - models/registry/latest
+      - data/processed
+    metrics:
+      - models/evaluation/eval_report.json:
+          cache: false
+
+  # ── Stage 4: HPO (optional, expensive) ───────────────────────────────────
+  hpo:
+    cmd: python scripts/run_hpo.py
+      --n-trials 30
+      --output-dir models/hpo
+    deps:
+      - src/ml/hpo.py
+      - data/processed
+    outs:
+      - models/hpo/hpo_results.json:
+          cache: false
